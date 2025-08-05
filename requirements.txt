@@ -1,0 +1,11 @@
+boto3
+awscli
+langchain
+langchain-aws
+langchain-pinecone
+pinecone
+python-dotenv
+langchain-community
+botocore
+pydantic
+streamlit
