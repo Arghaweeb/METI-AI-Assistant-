@@ -210,9 +210,10 @@ def initialize_rag_system():
     """Initialize the RAG system with caching"""
     try:
         # AWS + Pinecone Configs
-        AWS_REGION = os.getenv("AWS_REGION")
-        PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-        PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+        AWS_REGION = st.secrets["AWS_REGION"]
+        PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+        PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
+        PINECONE_NAMESPACE = st.secrets["PINECONE_NAMESPACE"]
         
         # Validate environment variables
         if not all([AWS_REGION, PINECONE_API_KEY, PINECONE_INDEX_NAME]):
