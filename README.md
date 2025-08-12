@@ -40,8 +40,8 @@ An intelligent document search and Q&A system for Japan's Ministry of Economy, T
 
 The system contains official documents from these METI committees:
 
-| Committee | Japanese Name | Meetings Covered |
-|-----------|---------------|------------------|
+| Committee | Japanese Name 
+|-----------|---------------
 | **Basic Electricity & Gas Policy** | 電力・ガス基本政策小委員会 
 | **Renewable Energy & Networks** | 再生可能エネルギー大量導入・次世代電力ネットワーク小委員会 
 | **Next Generation Power System** | 次世代電力系統ワーキンググループ 
