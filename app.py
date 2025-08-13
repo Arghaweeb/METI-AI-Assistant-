@@ -4,6 +4,8 @@ import sys
 from datetime import datetime
 import time
 from dotenv import load_dotenv
+import boto3
+from botocore.exceptions import ClientError
 
 # Import your RAG system components
 from pinecone import Pinecone
@@ -14,6 +16,51 @@ from langchain.prompts import PromptTemplate
 
 # Load environment variables
 load_dotenv()
+
+
+def create_presigned_pdf_link(s3_uri, page_number=None, expiration=3600):
+    """Create a presigned URL for the PDF document"""
+    try:
+        # Initialize S3 client using your AWS credentials
+        s3_client = boto3.client(
+            's3', 
+            aws_region = st.secrets["AWS_REGION"]
+            aws_access_key = st.secrets["AWS_ACCESS_KEY_ID"]
+            aws_secret_key = st.secrets["AWS_SECRET_ACCESS_KEY"]
+        )
+        
+        # Extract bucket and key from S3 URI
+        s3_parts = s3_uri.replace("s3://", "").split("/", 1)
+        bucket_name = s3_parts[0]
+        object_key = s3_parts[1]
+        
+        # Generate presigned URL (valid for 1 hour)
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+             Params={
+                 'Bucket': bucket_name, 
+                 'Key': object_key,
+                 'ResponseContentDisposition': 'inline',
+                 'ResponseContentType': 'application/pdf'
+            },
+            ExpiresIn=expiration
+        )
+        
+        # Extract filename for display
+        filename = object_key.split("/")[-1]
+        
+        # Create link with page reference if available
+        if page_number:
+            return f"[📄 {filename} (Page {page_number})]({presigned_url})"
+        else:
+            return f"[📄 {filename}]({presigned_url})"
+            
+    except ClientError as e:
+        print(f"Error generating presigned URL: {e}")
+        return f"📄 {s3_uri} (Link unavailable)"
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        return f"📄 {s3_uri}"
 
 # Language configurations
 LANGUAGES = {
@@ -57,7 +104,10 @@ LANGUAGES = {
         "system_initialized": "✅ System initialized successfully!",
         "system_failed": "❌ Failed to initialize system. Please check your configuration.",
         "searching": "Searching through METI committee documents...",
-        "coming_soon": "(Coming Soon: 2023, 2024)"
+        "coming_soon": "(Coming Soon: 2023, 2024)",
+        "theme_mode": "🎨 Theme Mode",
+        "dark_mode": "🌙 Dark Mode",
+        "light_mode": "☀️ Light Mode"
     },
     "ja": {
         "title": "METI委員会情報エージェント",
@@ -99,7 +149,10 @@ LANGUAGES = {
         "system_initialized": "✅ システムが正常に初期化されました！",
         "system_failed": "❌ システムの初期化に失敗しました。設定を確認してください。",
         "searching": "METI委員会文書を検索中...",
-        "coming_soon": "（近日公開: 2023年、2024年）"
+        "coming_soon": "（近日公開: 2023年、2024年）",
+        "theme_mode": "🎨 テーマモード",
+        "dark_mode": "🌙 ダークモード",
+        "light_mode": "☀️ ライトモード"
     }
 }
 
@@ -152,50 +205,41 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize session state for language
+# Initialize session state
 if 'language' not in st.session_state:
     st.session_state.language = 'en'
+if 'theme_mode' not in st.session_state:
+    st.session_state.theme_mode = 'dark'
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'rag_system' not in st.session_state:
+    st.session_state.rag_system = None
+if 'system_initialized' not in st.session_state:
+    st.session_state.system_initialized = False
 
-# Enhanced Custom CSS
-st.markdown("""
+def get_css_for_theme(theme_mode):
+    """Return CSS based on theme mode"""
+    if theme_mode == 'dark':
+        return """
 <style>
-    /* Global Styles */
+    /* Global Styles - Dark Mode */
     .main {
         padding-top: 1rem;
     }
     
-    /* Language Switcher */
-    .language-switcher {
+    /* Theme switcher */
+    .theme-switcher {
         position: fixed;
-        top: 70px;
-        right: 20px;
+        top: 10px;
+        right: 80px;
         z-index: 999;
         background: linear-gradient(135deg, #000000 0%, #1AE315 100%);
         border-radius: 20px;
-        padding: 8px 16px;
+        padding: 6px 12px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
     
-    .language-button {
-        background: none !important;
-        border: none !important;
-        color: white !important;
-        font-weight: bold;
-        cursor: pointer;
-        padding: 4px 8px;
-        border-radius: 10px;
-        transition: all 0.3s ease;
-    }
-    
-    .language-button:hover {
-        background: rgba(255,255,255,0.2) !important;
-    }
-    
-    .language-button.active {
-        background: rgba(255,255,255,0.3) !important;
-    }
-    
-    /* Header */
+    /* Header - Dark */
     .main-header {
         text-align: center;
         padding: 2rem 1rem;
@@ -218,24 +262,29 @@ st.markdown("""
         background: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.05' fill-rule='evenodd'%3E%3Cpath d='m0 40l40-40h-40v40zm40 0v-40h-40l40 40z'/%3E%3C/g%3E%3C/svg%3E");
     }
     
-    .main-header h1 {
+    .main-header h1, .main-header p {
+        position: relative;
+        z-index: 1;
         margin: 0;
+    }
+    
+    .main-header h1 {
         font-size: 2.5rem;
         font-weight: 700;
         text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        position: relative;
-        z-index: 1;
+        
     }
     
+
     .main-header p {
-        margin: 0.5rem 0 0 0;
+        
         font-size: 1.1rem;
         opacity: 0.9;
-        position: relative;
-        z-index: 1;
+        margin-top: 0.5rem;
     }
     
-    /* Cards */
+    
+    /* Cards - Dark */
     .committee-card {
         background: linear-gradient(145deg, #000000 0%, #111111 100%);
         padding: 1.2rem;
@@ -244,25 +293,13 @@ st.markdown("""
         margin-bottom: 1rem;
         box-shadow: 0 4px 15px rgba(0,0,0,0.2);
         transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .committee-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(145deg, transparent 0%, rgba(26, 227, 21, 0.05) 100%);
-        pointer-events: none;
+        color: white;
     }
     
     .committee-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 8px 25px rgba(26, 227, 21, 0.2);
-        border-left-color: #1AE315;
+        
     }
     
     .metric-card {
@@ -273,24 +310,7 @@ st.markdown("""
         text-align: center;
         border: 2px solid #1AE315;
         transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .metric-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: radial-gradient(circle at center, rgba(26, 227, 21, 0.1) 0%, transparent 70%);
-        pointer-events: none;
-    }
-    
-    .metric-card:hover {
-        transform: scale(1.02);
-        box-shadow: 0 10px 30px rgba(26, 227, 21, 0.3);
+        color: white;
     }
     
     .source-doc {
@@ -300,22 +320,36 @@ st.markdown("""
         margin-bottom: 1rem;
         border-left: 4px solid #1AE315;
         box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        transition: all 0.3s ease;
+        color: white;
     }
     
-    .source-doc:hover {
-        transform: translateX(5px);
-        box-shadow: 0 6px 20px rgba(26, 227, 21, 0.15);
+    .question-box {
+        background: linear-gradient(145deg, #111111 0%, #000000 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #1AE315;
+        margin-bottom: 1rem;
+        color: white;
     }
     
-    /* Input styling */
+    .answer-box {
+        background: linear-gradient(145deg, #000000 0%, #111111 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 2px solid #1AE315;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 15px rgba(26, 227, 21, 0.2);
+        color: white;
+    }
+    
+    /* Input styling - Dark */
     .stTextArea textarea {
         background: linear-gradient(145deg, #000000 0%, #111111 100%) !important;
         border: 2px solid #333 !important;
         border-radius: 12px !important;
         color: white !important;
         font-size: 16px !important;
-        transition: all 0.3s ease !important;
+        
     }
     
     .stTextArea textarea:focus {
@@ -323,7 +357,7 @@ st.markdown("""
         box-shadow: 0 0 15px rgba(26, 227, 21, 0.3) !important;
     }
     
-    /* Button styling */
+    /* Button styling - Dark */
     button[kind="primary"] {
         background: linear-gradient(135deg, #000000 0%, #1AE315 100%) !important;
         color: white !important;
@@ -341,22 +375,7 @@ st.markdown("""
         box-shadow: 0 8px 25px rgba(26, 227, 21, 0.4) !important;
     }
     
-    /* Secondary buttons */
-    .stButton > button:not([kind="primary"]) {
-        background: linear-gradient(145deg, #111111 0%, #000000 100%) !important;
-        color: #1AE315 !important;
-        border: 2px solid #1AE315 !important;
-        border-radius: 8px !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    .stButton > button:not([kind="primary"]):hover {
-        background: linear-gradient(145deg, #1AE315 0%, #0ea312 100%) !important;
-        color: white !important;
-        transform: translateY(-1px) !important;
-    }
-
-    /* Slider styling */
+    /* Slider styling - Dark */
     div[data-testid="stSlider"] > div > div > div {
         background: linear-gradient(135deg, #000000 0%, #1AE315 100%) !important;
         height: 6px !important;
@@ -374,32 +393,32 @@ st.markdown("""
     }
 
     div[data-testid="stSlider"] label {
-       color: white !important;
-       font-weight: bold !important;
+        color: white !important;
+        font-weight: bold !important;
     }
 
-/* Force slider value styling with higher specificity */
+    /* Force slider value styling with higher specificity - Dark */
     div[data-testid="stSlider"] * {
-       --slider-value-color: white !important;
+        --slider-value-color: white !important;
     }
 
     div[data-testid="stSlider"] [role="slider"]::after,
     div[data-testid="stSlider"] [role="slider"]::before {
-       color: white !important;
-       background-color: #000000 !important;
-       border: 2px solid #1AE315 !important;
-       border-radius: 6px !important;
-       padding: 6px 10px !important;
-       font-weight: bold !important;
-       font-size: 14px !important;
-}
+        color: white !important;
+        background-color: #000000 !important;
+        border: 2px solid #1AE315 !important;
+        border-radius: 6px !important;
+        padding: 6px 10px !important;
+        font-weight: bold !important;
+        font-size: 14px !important;
+    }
 
-    /* Nuclear option - target all text in slider area */
+    /* Nuclear option - target all text in slider area - Dark */
     div[data-testid="stSlider"] * {
         color: white !important;
     }
 
-    /* Override any inline styles */
+    /* Override any inline styles - Dark */
     div[data-testid="stSlider"] [style*="color"] {
         color: white !important;
         background-color: #000000 !important;
@@ -408,102 +427,310 @@ st.markdown("""
         padding: 6px 10px !important;
         font-weight: bold !important;
     }
+</style>
+"""
+    else:  # light mode
+        return """
+<style>
+    /* Global Styles - Light Mode */
+    .main {
+        padding-top: 1rem;
+        background-color: #f8f9fa;
+    }
     
-    div[data-testid="stSlider"] div[data-baseweb="slider"] span {
+    /* Theme switcher */
+    .theme-switcher {
+        position: fixed;
+        top: 10px;
+        right: 80px;
+        z-index: 999;
+        background: linear-gradient(135deg, #1AE315 0%, #0ea312 100%);
+        border-radius: 20px;
+        padding: 6px 12px;
+        box-shadow: 0 4px 12px rgba(26, 227, 21, 0.3);
+    }
+    
+    /* Header - Light */
+    .main-header {
+        text-align: center;
+        padding: 2rem 1rem;
+        background: linear-gradient(135deg, #ffffff 0%, #1AE315 100%);
+        color: #333;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 25px rgba(26, 227, 21, 0.2);
+        border: 2px solid #1AE315;
+    }
+    
+    .main-header h1 {
+        margin: 0;
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #333;
+    }
+    
+    .main-header p {
+        margin: 0.5rem 0 0 0;
+        font-size: 1.1rem;
+        color: #555;
+    }
+    
+    /* Cards - Light */
+    .committee-card {
+        background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+        padding: 1.2rem;
+        border-radius: 12px;
+        border-left: 4px solid #1AE315;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        color: #333;
+        border: 1px solid #e9ecef;
+    }
+    
+    .committee-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(26, 227, 21, 0.15);
+    }
+    
+    .metric-card {
+        background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+        text-align: center;
+        border: 2px solid #1AE315;
+        transition: all 0.3s ease;
+        color: #333;
+    }
+    
+    .source-doc {
+        background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+        padding: 1.2rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        border-left: 4px solid #1AE315;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        color: #333;
+        border: 1px solid #e9ecef;
+    }
+    
+    .question-box {
+        background: linear-gradient(145deg, #f8f9fa 0%, #ffffff 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        border-left: 4px solid #1AE315;
+        margin-bottom: 1rem;
+        color: #333;
+        border: 1px solid #e9ecef;
+    }
+    
+    .answer-box {
+        background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        border: 2px solid #1AE315;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 15px rgba(26, 227, 21, 0.1);
+        color: #333 !important;
+    }
+    
+    /* Input styling - Light */
+    .stTextArea textarea {
+        background: #ffffff !important;
+        border: 2px solid #e9ecef !important;
+        border-radius: 12px !important;
+        color: #333 !important;
+        font-size: 16px !important;
+    }
+    
+    .stTextArea textarea:focus {
+        border-color: #1AE315 !important;
+        box-shadow: 0 0 15px rgba(26, 227, 21, 0.2) !important;
+    }
+    
+    /* Button styling - Light */
+    button[kind="primary"] {
+        background: linear-gradient(135deg, #1AE315 0%, #0ea312 100%) !important;
         color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 0.7rem 1.5rem !important;
         font-weight: bold !important;
-        background-color: #000000 !important;
-        padding: 6px 10px !important;
-        border-radius: 6px !important;
-        border: 2px solid #1AE315 !important;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.8) !important;
-        font-size: 14px !important;
+        font-size: 1.1rem !important;
+        transition: all 0.3s ease !important;
+        box-shadow: 0 4px 15px rgba(26, 227, 21, 0.3) !important;
     }
 
+    button[kind="primary"]:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 8px 25px rgba(26, 227, 21, 0.4) !important;
+    }
     
-    /* Selectbox styling */
+    /* Secondary buttons - Light */
+    .stButton > button:not([kind="primary"]) {
+        background: #ffffff !important;
+        color: #1AE315 !important;
+        border: 2px solid #1AE315 !important;
+        border-radius: 8px !important;
+    }
+    
+    /* Slider styling - Light */
+    div[data-testid="stSlider"] > div > div > div {
+        background: linear-gradient(135deg, #1AE315 0%, #0ea312 100%) !important;
+        height: 6px !important;
+        border-radius: 5px !important;
+    }
+
+    div[data-testid="stSlider"] > div > div > div > div {
+        background-color: white !important;
+        border: 2px solid #1AE315 !important;
+        height: 20px !important;
+        width: 20px !important;
+        margin-top: -7px !important;
+        border-radius: 50% !important;
+        box-shadow: 0 2px 10px rgba(26, 227, 21, 0.3) !important;
+    }
+
+    div[data-testid="stSlider"] label {
+        color: #333 !important;
+        font-weight: bold !important;
+    }
+
+    /* Force slider value styling - Light */
+    div[data-testid="stSlider"] * {
+        color: #333 !important;
+    }
+
+    div[data-testid="stSlider"] [style*="color"] {
+        color: #333 !important;
+        background-color: #ffffff !important;
+        border: 2px solid #1AE315 !important;
+        border-radius: 6px !important;
+        padding: 6px 10px !important;
+        font-weight: bold !important;
+        box-shadow: 0 2px 8px rgba(26, 227, 21, 0.2) !important;
+    }
+    
+    /* Selectbox styling - Light */
     .stSelectbox > div > div {
-        background: linear-gradient(145deg, #000000 0%, #111111 100%) !important;
-        border: 2px solid #333 !important;
+        background: #ffffff !important;
+        border: 2px solid #e9ecef !important;
         border-radius: 8px !important;
+        color: #333 !important;
     }
     
-    .stSelectbox > div > div:hover {
-        border-color: #1AE315 !important;
+    /* Text color fixes for light mode - Enhanced */
+    .stMarkdown, .stMarkdown * {
+        color: #333 !important;
+    }
+
+    /* Main content area text */
+    .main .stMarkdown p, 
+    .main .stMarkdown h1, 
+    .main .stMarkdown h2, 
+    .main .stMarkdown h3,
+    .main .stMarkdown span,
+    .main .stMarkdown div,
+    .main p, .main h1, .main h2, .main h3, .main span, .main div {
+        color: #333 !important;
+    }
+
+    /* Question and answer sections */
+    [data-testid="stVerticalBlock"] *,
+    [data-testid="element-container"] *,
+    .element-container * {
+        color: #333 !important;
+    }
+
+    /* Headers and subheaders */
+    .stApp h1, .stApp h2, .stApp h3, .stApp h4,
+    header, .stHeader * {
+        color: #333 !important;
+    }
+
+    /* Text areas and form labels */
+    .stTextArea label, 
+    .stTextInput label,
+    .stSelectbox label,
+    .stSlider label {
+        color: #333 !important;
+    }
+
+    /* Metrics and status text */
+    [data-testid="metric-container"] *,
+    [data-testid="metric-container"] .metric-label,
+    [data-testid="metric-container"] .metric-value {
+       color: #333 !important;
+    }
+
+   /* Nuclear option - Force all text to be dark except buttons */
+    .stApp * {
+       color: #333 !important;
+    }
+
+    /* Keep button text white and green text where needed */
+    button[kind="primary"], button[kind="primary"] * {
+       color: white !important;
+    }
+
+    .stButton > button:not([kind="primary"]) {
+       color: #1AE315 !important;
     }
     
-    /* Expander styling */
-    .streamlit-expanderHeader {
-        background: linear-gradient(145deg, #111111 0%, #000000 100%) !important;
-        border: 1px solid #333 !important;
-        border-radius: 8px !important;
+    /* Keep green accent colors */
+    .committee-card small[style*="color: #1AE315"] {
+       color: #1AE315 !important;
     }
     
-    .streamlit-expanderContent {
-        background: #0a0a0a !important;
-        border: 1px solid #333 !important;
-        border-top: none !important;
-        border-radius: 0 0 8px 8px !important;
-    }
-    
-    /* Animations */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    
-    .fade-in {
-        animation: fadeIn 0.5s ease-out;
-    }
-    
-    /* Success/Error message styling */
-    .stAlert {
-        border-radius: 12px !important;
-        border-left: 4px solid #1AE315 !important;
-    }
-    
-    /* Sidebar styling */
+    /* Sidebar styling - Light */
     .css-1d391kg {
-        background: linear-gradient(180deg, #000000 0%, #111111 100%) !important;
+        background: #f8f9fa !important;
     }
     
-    /* Metric styling */
+    /* Metric styling - Light */
     [data-testid="metric-container"] {
-        background: linear-gradient(145deg, #111111 0%, #000000 100%) !important;
-        border: 1px solid #333 !important;
+        background: #ffffff !important;
+        border: 2px solid #1AE315 !important;
         padding: 1rem !important;
         border-radius: 10px !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important;
+        box-shadow: 0 4px 15px rgba(26, 227, 21, 0.1) !important;
+        color: #333 !important;
     }
 </style>
-""", unsafe_allow_html=True)
+"""
 
-# Initialize session state
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'rag_system' not in st.session_state:
-    st.session_state.rag_system = None
-if 'system_initialized' not in st.session_state:
-    st.session_state.system_initialized = False
-
-# Language switcher function
-def render_language_switcher():
-    """Render the language switcher in the top right"""
-    st.markdown("""
-    <div class="language-switcher">
-        <span style="color: white; font-size: 14px; margin-right: 10px;">🌐</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Language switcher in sidebar
+# Render theme and language switchers
+def render_switchers():
+    """Render the theme and language switchers in the sidebar"""
     with st.sidebar:
         st.markdown("---")
+        
+        # Theme switcher
+        st.markdown(f"### {get_text('theme_mode')}")
+        theme_mode = st.radio(
+            get_text("theme_mode"),
+            ["dark", "light"],
+            format_func=lambda x: get_text("dark_mode") if x == "dark" else get_text("light_mode"),
+            index=0 if st.session_state.theme_mode == "dark" else 1,
+            key="theme_switcher",
+            horizontal=True
+        )
+        
+        if theme_mode != st.session_state.theme_mode:
+            st.session_state.theme_mode = theme_mode
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Language switcher
         current_lang = st.radio(
             "🌐 Language / 言語:",
             ["en", "ja"],
             format_func=lambda x: "🇺🇸 English" if x == "en" else "🇯🇵 日本語",
             index=0 if st.session_state.language == "en" else 1,
-            key="lang_switcher"
+            key="lang_switcher",
+            horizontal=True
         )
         
         if current_lang != st.session_state.language:
@@ -598,7 +825,7 @@ You will answer questions based only on the provided context.
 def initialize_rag_system():
     """Initialize the RAG system with caching"""
     try:
-        # AWS + Pinecone Configs
+        
         # AWS + Pinecone Configs
         AWS_REGION = st.secrets["AWS_REGION"]
         PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
@@ -693,8 +920,11 @@ def query_system(question, prompt_type="comprehensive", retrieval_k=5):
         return None
 
 def main():
-    # Render language switcher
-    render_language_switcher()
+    # Apply theme-based CSS
+    st.markdown(get_css_for_theme(st.session_state.theme_mode), unsafe_allow_html=True)
+    
+    # Render switchers
+    render_switchers()
     
     # Header
     st.markdown(f"""
@@ -858,9 +1088,7 @@ def main():
         # Question
         st.subheader(get_text("question_label"))
         st.markdown(f"""
-        <div style="background: linear-gradient(145deg, #111111 0%, #000000 100%); 
-                    padding: 1rem; border-radius: 10px; border-left: 4px solid #1AE315; 
-                    margin-bottom: 1rem;">
+        <div class="question-box">
             {latest['question']}
         </div>
         """, unsafe_allow_html=True)
@@ -868,9 +1096,7 @@ def main():
         # Answer
         st.subheader(get_text("answer_label"))
         st.markdown(f"""
-        <div style="background: linear-gradient(145deg, #000000 0%, #111111 100%); 
-                    padding: 1.5rem; border-radius: 10px; border: 2px solid #1AE315; 
-                    margin-bottom: 1.5rem; box-shadow: 0 4px 15px rgba(26, 227, 21, 0.2);">
+        <div class="answer-box">
             {latest['answer']}
         </div>
         """, unsafe_allow_html=True)
@@ -880,16 +1106,38 @@ def main():
             st.subheader(get_text("source_documents"))
             
             for i, doc in enumerate(latest['source_documents']):
-                with st.expander(f"📄 {get_text('source_documents').replace(':', '')} {i+1}", expanded=False):
+                
+                #Extract metadata for link creation
+                metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+                s3_uri = metadata.get('x-amz-bedrock-kb-source-uri', metadata.get('source', ''))
+                page_number = metadata.get('x-amz-bedrock-kb-page-number')
+                
+                #Create PDF link
+                if s3_uri and s3_uri.startswith("s3://"):
+                    pdf_link = create_presigned_pdf_link(s3_uri, page_number)
+                    filename = s3_uri.split("/")[-1]
+                else:
+                    pdf_link = "📄 Source document"
+                    filename = f"Document {i+1}"
+                    
+                with st.expander(f"📄 {filename}", expanded=False):
+                    # Show PDF link prominently
+                    if s3_uri and s3_uri.startswith('s3://'):
+                        st.markdown(f"**🔗 View PDF:** {pdf_link}")
+                        st.markdown("---")
+            
                     st.markdown(f"""
                     <div class="source-doc">
-                        <strong>{get_text("content_preview")}</strong><br><br>
-                        {doc.page_content[:500]}{'...' if len(doc.page_content) > 500 else ''}
+                       <strong>{get_text("content_preview")}</strong><br><br>
+                       {doc.page_content[:500]}{'...' if len(doc.page_content) > 500 else ''}
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    if doc.metadata:
-                        st.json(doc.metadata)
+            
+                    # Show metadata in a collapsible section
+                    if metadata:
+                         with st.expander("📋 Document Metadata", expanded=False):
+                               st.json(metadata)
+                 
         
         # Query details
         with st.expander(f"🔍 {get_text('query_details')}", expanded=False):
@@ -949,7 +1197,7 @@ def main():
     # Footer
     st.markdown("---")
     st.markdown(f"""
-    <div style="text-align: center; padding: 2rem; color: #666; font-size: 0.9rem;">
+    <div style="text-align: center; padding: 2rem; color: #{'666' if st.session_state.theme_mode == 'dark' else '555'}; font-size: 0.9rem;">
         <p>⚡ Powered by RAG Technology | 🏛️ Official METI Committee Documents | 🤖 Claude AI</p>
         <p style="font-size: 0.8rem; margin-top: 1rem;">
             {"This system provides information from official METI committee meetings. For the most current information, please refer to official METI publications." if st.session_state.language == "en" else "このシステムは公式のMETI委員会会議の情報を提供します。最新の情報については、公式のMETI出版物をご参照ください。"}
