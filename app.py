@@ -24,9 +24,9 @@ def create_presigned_pdf_link(s3_uri, page_number=None, expiration=3600):
         # Initialize S3 client using your AWS credentials
         s3_client = boto3.client(
             's3', 
-            aws_region = st.secrets["AWS_REGION"]
-            aws_access_key = st.secrets["AWS_ACCESS_KEY_ID"]
-            aws_secret_key = st.secrets["AWS_SECRET_ACCESS_KEY"]
+            region_name=st.secrets["AWS_REGION"],
+            aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"]
         )
         
         # Extract bucket and key from S3 URI
