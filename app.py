@@ -1198,7 +1198,7 @@ def main():
     st.markdown("---")
     st.markdown(f"""
     <div style="text-align: center; padding: 2rem; color: #{'666' if st.session_state.theme_mode == 'dark' else '555'}; font-size: 0.9rem;">
-        <p>⚡ Powered by RAG Technology | 🏛️ Official METI Committee Documents | 🤖 Claude AI</p>
+        <p>⚡ Powered by RAG Technology | 🏛️ Official METI Committee Documents | 🤖 Claude AI | Agile Energy X ™️ | Created by Arghadeep Biswas</p>
         <p style="font-size: 0.8rem; margin-top: 1rem;">
             {"This system provides information from official METI committee meetings. For the most current information, please refer to official METI publications." if st.session_state.language == "en" else "このシステムは公式のMETI委員会会議の情報を提供します。最新の情報については、公式のMETI出版物をご参照ください。"}
         </p>
